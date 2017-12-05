@@ -51,7 +51,7 @@ cam=`basename $file0 | cut -c16-17`
 tag=${cam}_W
 
 dte=`date -u +20%y%m%d_%H%M%S`
-dte1=`echo $file0 | sed -e 's/f//g' -e 's/C/ /g' | awk '{print $1}'`
+dte1=`basename $file0 | sed -e 's/f//g' -e 's/C/ /g' | awk '{print $1}'`
 me=`basename $0`
 here=`pwd`
 
