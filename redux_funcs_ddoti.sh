@@ -23,6 +23,10 @@ export web_pc=tcs-a
 export web_user=reducer
 export web_data_dir=/usr/local/var/www/main/ddoti
 
+nfile_min=2
+nflat_min=6
+nbias_min=6
+
 export NBATCH=`grep processor /proc/cpuinfo | wc -l`
 
 cd $REDUX_BASE_DIR
@@ -35,12 +39,7 @@ function ddoti_setdirs() {
     export FLAT_DIRS=`ls -d ${TODAY}/20*-0001/*/* 2>/dev/null`
     export STANDARD_DIRS=`ls -d ${TODAY}/20*-0001/*/* 2>/dev/null`
     export GRB_DIRS=`ls -d ${TODAY}/2017A-1000/*/* 2>/dev/null`
-    #export LIGO_DIRS=`ls -d ${TODAY}/2015B-1000/* ${TODAY}/2017A-1000/* 2>/dev/null`
     env | grep _DIRS
-    echo "set source_list=<one of these> to activate , then ddoti_do_redux"
-    echo "or just do ddoti_do_bias, ddoti_do_flat, ddoti_do_grb, or ddoti_do_standards"
-    echo " (ddoti_set_dirs syncs the directory structure)"
-    env | grep 'grb_'
 }
 
 function ddoti_copy_files() {
@@ -73,7 +72,7 @@ function ddoti_do_redux() {
         $test touch $REDUX_LOCKFILE
         for dir in $source_list; do
             n=`ls $dir | grep fits | wc -l`
-            [ "$n" -eq 0 ] && continue
+            [ "$n" -lt "$nfile_min" ] && continue
             TODAY=`echo $dir | awk -F/ '{print $1}'`
             cd $dir
             for list in `ls C?_list.txt 2>/dev/null`; do
@@ -93,7 +92,7 @@ function ddoti_do_bias() {
     ddoti_create_manifest
     for dir in $source_list; do
         n=`ls $dir | grep fits | wc -l`
-        [ "$n" -eq 0 ] && continue
+        [ "$n" -lt "$nbias_min" ] && continue
         cd $dir
         for list in `ls C?_list.txt 2>/dev/null`; do
             echo bias_ddoti $list
@@ -112,7 +111,7 @@ function ddoti_do_flat() {
     ddoti_create_manifest
     for dir in $source_list; do
         n=`ls $dir | grep fits | wc -l`
-        [ "$n" -eq 0 ] && continue
+        [ "$n" -lt "$nflat_min" ] && continue
         cd $dir
         for list in `ls C?_list.txt 2>/dev/null`; do
             echo flat_ddoti $list
@@ -121,11 +120,6 @@ function ddoti_do_flat() {
         wait
         cd $REDUX_BASE_DIR
     done
-}
-
-function ddoti_do_grb() {
-    source_list=$GRB_DIRS
-    [ "$source_list" ] && ddoti_do_redux
 }
 
 function ddoti_do_standards() {
