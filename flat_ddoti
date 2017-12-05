@@ -1,0 +1,83 @@
+#!/bin/bash
+
+file_list=$1
+shift
+
+nsplit=4
+flat_archive_dir=${REDUX_BASE_DIR}/flat_bank
+cleanup=yes
+
+while [ $# -gt 0 ] ; do eval $1 ; shift ; done
+
+[ -d "$flat_archive_dir" ] || mkdir $flat_archive_dir
+
+[ -f $file_list ] || { echo "No file $file_list" ; exit 1 ; }
+
+go_iter=0
+function gonogo() {
+    ((go_iter++))
+    [ "$((go_iter%NBATCH))" -eq 0 ] && wait
+}
+
+dte=`date -u +20%y%m%d_%H%M%S`
+file0=`head -1 $file_list`
+dte1=`echo $file0 | sed -e 's/f//g' -e 's/C/ /g' | awk '{print $1}'`
+me=`basename $0`
+here=`pwd`
+workdir=${here}/${me}_${dte}_$$
+[ -d $workdir ] || mkdir $workdir
+
+echo "Working in directory $workdir, logging to ${workdir}/${me}_${dte}_$$.log"
+exec > ${workdir}/${me}_${dte}_$$.log 2>&1
+
+for file in `cat $file_list`; do
+    bfile=`basename $file`
+    bfile0=${bfile%'.bz2'}
+    if [ "$bfile0" = "$bfile" ]; then
+        [ -f ${workdir}/$bfile ] || cp $file $workdir
+    else
+        [ -f ${workdir}/$bfile0 ] || {
+            cp $file $workdir
+            bunzip2 ${workdir}/$bfile &
+            gonogo
+        }
+    fi
+    echo $bfile0
+done > ${workdir}/$file_list
+wait
+cd $workdir
+
+file0=`head -1 $file_list`
+ccd=`gethead CCD_NAME $file0`
+[ "$ccd" ] || ccd=`basename $file0 | cut -c16-17`
+filter=`gethead FILTER $file0`
+[ "$filter" ] || filter=W
+
+ddoti_split.sh $file_list $nsplit
+
+function doit() {
+    local tag0=$1
+    local lfile=$2
+    local ofile=$3
+    gethead BZERO BSCALE SKYLEV @$lfile | awk '{printf("sethead BZERO=%f BSCALE=%f %s\n", $2/$4,$3/$4,$1)}' | sh
+    stack.sh $lfile $ofile
+    ddoti_flat_trim.py $ofile
+}
+
+for tag in `ls f??_$file0 | awk -F_ '{print $1}'`; do
+    ls ${tag}*.fits > ${tag}_$file_list
+    doit $tag ${tag}_$file_list ${tag}_flat.fits &
+    gonogo
+done
+wait
+
+ddoti_unsplit.py flat.fits $nsplit
+fits2jpg.py flat.fits 1024 noinvert
+fpack flat.fits
+
+tag=${ccd}_$filter
+cp flat.fits.fz ${flat_archive_dir}/flat_${dte1}_${tag}.fits.fz
+cp flat.jpg ${flat_archive_dir}/flat_${dte1}_${tag}.jpg
+cp ${me}_${dte}_$$.log ${flat_archive_dir}/flat_${dte1}_${tag}.log
+
+[ "$cleanup" = "yes" ] && rm -r $workdir

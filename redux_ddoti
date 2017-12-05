@@ -1,0 +1,164 @@
+#!/bin/bash
+
+cmd="$0 $@"
+
+file_list=$1
+shift
+
+grb_RA=
+grb_DEC=
+
+#matching
+match_rad=1000 # pixels, default 0 means use image size (slow)
+match_thresh=20.0
+mag_diff_max=3.0
+nmatch_min=10
+image_rad_max=1500
+
+# source detection
+do_lightcurves=yes
+ndetect_max=50
+search_snr=10
+
+# base reduction
+inst=nircam
+nsplit=4
+sat_level=50000.0
+gain=0.64
+do_distort=yes
+
+# summary
+thumb_size=301
+thumb_scale=2
+do_psf_plot=no
+
+cleanup=no
+
+while [ $# -gt 0 ] ; do eval $1 ; shift ; done
+
+[ -s $file_list ] || { echo "No file $file_list" ; exit 1 ; }
+
+file0=`head -1 $file_list`
+[ -f $file0 ] || { echo "Cannot find first file $file0" ; exit 2 ; }
+
+go_iter=0
+function gonogo() {
+    ((go_iter++))
+    [ "$((go_iter%NBATCH))" -eq 0 ] && wait
+}
+
+cam=`basename $file0 | cut -c16-17`
+tag=${cam}_W
+
+dte=`date -u +20%y%m%d_%H%M%S`
+dte1=`echo $file0 | sed -e 's/f//g' -e 's/C/ /g' | awk '{print $1}'`
+me=`basename $0`
+here=`pwd`
+
+catdir=${here}/catalogs
+biasdir=${here}/biases
+flatdir=${here}/flats
+workdir=${here}/${me}_${cam}
+[ -d $catdir ] || mkdir $catdir
+[ -d $biasdir ] || mkdir $biasdir
+[ -d $flatdir ] || mkdir $flatdir
+[ -d "$workdir" ] || mkdir $workdir
+
+nfiles=`cat $file_list | wc -l`
+logfile=${me}_${dte}_${tag}_$$.log
+rm ${workdir}/*log 2>/dev/null
+echo "Working in directory $workdir, logging to ${workdir}/$logfile"
+exec > ${workdir}/$logfile 2>&1
+
+date -u
+t00=`date +%s`
+echo $cmd
+
+# copy the data into the current directory
+rm ${workdir}/old_$file_list ${workdir}/new_$file_list 2>/dev/null
+for file in `cat $file_list`; do
+    bfile=`basename $file`
+    bfile0=${bfile%'.bz2'}
+    if [ "$bfile0" = "$bfile" ]; then
+        [ -f ${workdir}/$bfile ] || cp $file $workdir
+    else
+        [ -f ${workdir}/$bfile0 ] || {
+            cp $file $workdir
+            bunzip2 ${workdir}/$bfile &
+            gonogo
+        }
+    fi
+    echo $bfile0
+done > ${workdir}/$file_list
+wait
+cd $workdir
+
+
+####
+# align the images, creates new_$file_list of successfully aligned files
+t0=`date +%s`
+#
+aargs="inst=$inst catdir=$catdir grb_RA=$grb_RA grb_DEC=$grb_DEC match_rad=$match_rad"
+aargs="$aargs match_thresh=$match_thresh mag_diff_max=$mag_diff_max nmatch_min=$nmatch_min"
+aargs="$aargs image_rad_max=$image_rad_max do_distort=$do_distort sat_level=$sat_level gain=$gain"
+
+echo ddoti_align.sh $file_list $aargs
+ddoti_align.sh $file_list $aargs
+[ -s "new_$file_list" ] || { echo "No new files aligned, exiting..." ; cp $logfile ${here}/stack_${dte1}_${tag}.log ; exit 3 ; }
+
+date +%s | awk '{printf("Task Alignment: %.2f minutes\n",($1-'$t0')/60.)}'
+####
+
+
+####
+# now reduce each frame
+t0=`date +%s`
+#
+echo ddoti_redux.sh new_$file_list cam=$cam biasdir=$biasdir flatdir=$flatdir
+ddoti_redux.sh new_$file_list cam=$cam biasdir=$biasdir flatdir=$flatdir
+
+date +%s | awk '{printf("Task Reduce Frames: %.2f minutes\n",($1-'$t0')/60.)}'
+####
+
+
+####
+# now stack everything
+t0=`date +%s`
+#
+echo ddoti_stack.sh $file_list nsplit=$nsplit wt_file=flat_${cam}.fits
+ddoti_stack.sh $file_list nsplit=$nsplit wt_file=flat_${cam}.fits
+
+date +%s | awk '{printf("Task Stack Frames: %.2f minutes\n",($1-'$t0')/60.)}'
+####
+
+
+####
+# now find stars not present in USNO, and get lightcurves
+t0=`date +%s`
+#
+pargs="inst=$inst cam=$cam catdir=$catdir do_psf_plot=$do_psf_plot do_lightcurves=$do_lightcurves"
+pargs="$pargs ndetect_max=$ndetect_max search_snr=$search_snr"
+
+echo ddoti_phot.sh $file_list $pargs
+ddoti_phot.sh $file_list $pargs
+
+date +%s | awk '{printf("Task Photometry: %.2f minutes\n",($1-'$t0')/60.)}'
+####
+
+
+####
+# now we just collect everything and cleanup
+t0=`date +%s`
+#
+sargs="savedir=$here t00=$t00 ndetect_max=$ndetect_max search_snr=$search_snr"
+sargs="$sargs thumb_size=$thumb_size thumb_scale=$thumb_scale nfiles=$nfiles"
+
+echo ddoti_summary.sh $file_list $sargs
+ddoti_summary.sh $file_list $sargs
+
+date +%s | awk '{printf("Task Summarize: %.2f minutes\n",($1-'$t0')/60.)}'
+####
+
+date -u
+cp $logfile ${here}/stack_${dte1}_${tag}_${nfiles}.log
+[ "$cleanup" = "yes" ] && rm -r $workdir
