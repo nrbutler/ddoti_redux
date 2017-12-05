@@ -1,0 +1,40 @@
+INSTALL Instructions, Mon Dec  4 20:25:48 MST 2017
+
+c:
+astrometry.net (plus index-208.fits  index-209.fits)
+sextractor
+swarp
+wcstools
+
+# install the ddoti root
+cd /usr/local/var/ddoti
+rsync -e 'ssh -p 10222' -azv nrbutler@mira.la.asu.edu:/mnt/legion_scratch2/ddoti/* .
+
+# python install
+sudo apt-get install python-pip python-dev python-numpy python-scipy python-matplotlib python-pyfits imagemagick
+
+
+#build astrometry net
+sudo apt-get install libcairo2-dev libnetpbm10-dev netpbm libpng12-dev libjpeg-dev zlib1g-dev libbz2-dev swig cfitsio-dev
+cd ddot/astnet
+tar -zxf astrometry.net-0.72.tar.gz
+cd astrometry.net-0.72
+./configure
+make clean
+make
+sudo make install
+
+cd ..
+sudo cp index-20*gz /usr/local/astrometry/data/
+sudo gunzip /usr/local/astrometry/data/*gz
+
+#similarly make wcstools
+
+# sextractor
+sudo apt-get install libfftw3-dev libatlas-base-dev libatlas-dev libatlas3-base
+./configure --with-atlas-libdir=/usr/lib/atlas-base/  --with-atlas-incdir=/usr/include/atlas/
+make
+sudo make install
+sudo ln -s /usr/local/bin/sex /usr/local/bin/sextractor
+
+# same with swarp
