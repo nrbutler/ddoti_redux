@@ -5,8 +5,8 @@ radec2xy.py fits_file radec_file
 
 import sys,os
 from fit_wcs import ad2xy
-import pyfits
-from numpy import array
+from pyfits import getheader,getdata
+from numpy import loadtxt
 
 def usage():
     print __doc__
@@ -15,33 +15,23 @@ def usage():
 def radec2xy(fits_file,radecfile):
     """
     """
-    hdr=pyfits.getheader(fits_file)
+    hdr=getheader(fits_file)
     distort = 'PV1_1' in hdr
 
-    f = open(radecfile,'r')
-    ra=[];dec=[]
-    str=[]
-    for line in f.readlines():
-        str.append(line.strip())
-        ll=line.split()
-        if (len(ll)<=1): continue
-        if (ll[0][0]=="#"):
-            ra.append(-999)
-            dec.append(-999)
-        else:
-            ra.append(eval(ll[0]))
-            dec.append(eval(ll[1]))
+    filename, file_extension = os.path.splitext(radecfile)
+    if (file_extension=='.fits'): data = getdata(radecfile)
+    else: data = loadtxt(radecfile,ndmin=2).T
 
-    f.close()
-    ra = array(ra); dec = array(dec)
-    x,y = 1.*ra,1.*dec
-    j = (ra!=-999)*(dec!=-999)
-    x[j],y[j] = ad2xy(ra[j],dec[j],hdr,distort=distort)
+    ra,dec = data[:2]
+    if (len(data)>=4): mag,dmag = data[2:4]
+    else: mag,dmag = 0*ra+19,0*dec+0.1
 
-    for i in xrange(len(x)):
-        if (ra[i]!=-999 and dec[i]!=-999):
-            print """%f %f""" % (x[i],y[i])
-        else: print str[i]
+    x,y = ad2xy(ra,dec,hdr,distort=distort)
+    nx=hdr['NAXIS1']; ny=hdr['NAXIS2']
+    h = (x>=1)*(x<=nx)*(y>=1)*(y<=ny)
+    x = x[h]; y = y[h]; mag = mag[h]; dmag=dmag[h]; ra=ra[h]; dec=dec[h]
+    for i in xrange(len(x)): print """%f %f %d %f %f""" % (x[i],y[i],i+1,mag[i],dmag[i])
+
 
 def main():
 

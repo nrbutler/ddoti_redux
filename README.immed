@@ -1,0 +1,1 @@
+gcc -o immed immed.c -L. -lcfitsio -lm

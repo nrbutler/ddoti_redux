@@ -2,7 +2,7 @@
 
 [ -f /home/ddoti/MANUAL_MODE ] && { echo "file /home/ddoti/MANUAL_MODE present, aborting" ; exit 1 ; }
 
-source /usr/local/var/ddoti/redux_funcs_ddoti.sh
+source /usr/local/var/ddoti/bin/redux_funcs_ddoti.sh
 test=
 
 # just in case

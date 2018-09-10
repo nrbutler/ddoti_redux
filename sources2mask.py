@@ -48,40 +48,10 @@ def sources2mask(wt_file,source_file,outfile='mask.fits',fwhm=7.):
 
     mask+=1; mask[mask!=1]=0
 
-    sex_dir=wt_file.replace('.wt.fits','_dir/')
-    sex_file=os.path.basename(wt_file).replace('.wt.fits','_radec.txt')
-    sex_file=sex_dir+sex_file
-    if (os.path.exists(sex_file)==False):
-        sex_dir=wt_file.replace('.rms.fits','_dir/')
-        sex_file=os.path.basename(wt_file).replace('.rms.fits','_radec.txt')
-        sex_file=sex_dir+sex_file
-
-    if (os.path.exists(sex_file) and fwhm>=1):
-        print """Using sex_file %s""" % sex_file
-
-        try: dm,x,y = loadtxt(sex_file,unpack=True,usecols=(3,7,8))
-        except: dm,x,y=0.1,0.,0.
-
-        dm,x,y = atleast_1d(dm).clip(1.e-4), atleast_1d(x), atleast_1d(y)
-        sx,sy = mask.shape
-        for i in xrange(len(x)):
-            y0,x0 = int(round(x[i])),int(round(y[i]))
-            rad = int(fwhm**0.75*dm[i]**(-0.25))
-            for j in xrange(2*rad):
-                j0 = x0-rad+j
-                if (j0>=0 and j0<sx):
-                    for k in xrange(2*rad):
-                        k0 = y0-rad+k
-                        rr = (k-rad)**2+(j-rad)**2
-                        if (k0>=0 and k0<sy and rr<=rad*rad): mask[j0,k0]=0
-
     if (sigma>0):
-        if (os.path.exists(dat_file)):
-            dat = getdata(dat_file); dat -= median(dat[rms>0])
-            dat[dat<1.5*rms]=0
-            dat = gaussian_filter(dat,sigma)
-            mask *= dat<1.5*rms/sigma
-            dat = 0.
+        mask = gaussian_filter(mask,sigma)
+        mask[mask>0.9]=1
+        mask[mask<=0.9]=0
 
     mask[wt==0]=0
 

@@ -4,6 +4,8 @@ day=$1
 shift
 ccd=$1
 shift
+bin=$1
+shift
 
 dir=${REDUX_BASE_DIR}/bias_bank
 
@@ -11,11 +13,13 @@ while [ $# -gt 0 ] ; do eval $1 ; shift ; done
 
 [ -d "$dir" ] || mkdir $dir
 
-[ "$ccd" = "C2" -o "$ccd" = "C3" ] && exit 1
-
 cd $dir
 
-ls bias*.fits* 2>/dev/null | grep $ccd > $dir/file_list$$.txt
+ls bias*.fits* 2>/dev/null > file_list0$$.txt
+sed -e 's/_/ /g' -e 's/\.fits/ /g' file_list0$$.txt | awk '{print $3,$4,$5}' > file_list1$$.txt
+paste file_list0$$.txt file_list1$$.txt | eval "awk '{if(\$2~/$ccd/ && \$4==$bin) print \$1}'" > file_list$$.txt
+rm file_list0$$.txt file_list1$$.txt
+
 cut -c6-13 file_list$$.txt > days$$.txt
 paste days$$.txt file_list$$.txt > days$$.tmp
 sort -n -k 1 days$$.tmp > days$$.txt

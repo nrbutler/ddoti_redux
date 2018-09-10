@@ -21,7 +21,7 @@ function gonogo() {
 
 dte=`date -u +20%y%m%d_%H%M%S`
 file0=`head -1 $file_list`
-dte1=`echo $file0 | sed -e 's/f//g' -e 's/C/ /g' | awk '{print $1}'`
+dte1=`basename $file0 | sed -e 's/f//g' -e 's/C/ /g' | awk '{print $1}'`
 me=`basename $0`
 here=`pwd`
 workdir=${here}/${me}_${dte}_$$
@@ -32,22 +32,31 @@ exec > ${workdir}/${me}_${dte}_$$.log 2>&1
 
 for file in `cat $file_list`; do
     bfile=`basename $file`
+    extension=${bfile##*.}
     bfile0=${bfile%'.bz2'}
+    bfile0=${bfile0%'.fz'}
     if [ "$bfile0" = "$bfile" ]; then
         [ -f ${workdir}/$bfile ] || cp $file $workdir
     else
         [ -f ${workdir}/$bfile0 ] || {
-            cp $file $workdir
-            bunzip2 ${workdir}/$bfile &
+            [ "$extension" = "bz2" ] && ( cp $file $workdir ; bunzip2 ${workdir}/$bfile ; ) &
+            [ "$extension" = "fz" ] && funpack -O ${workdir}/$bfile0 $file &
             gonogo
         }
     fi
-    echo $bfile0
-done > ${workdir}/$file_list
+done
 wait
+for file in `cat $file_list`; do
+    bfile=`basename $file`
+    bfile0=${bfile%'.bz2'}
+    bfile0=${bfile0%'.fz'}
+    ls ${workdir}/$bfile0 | awk -F/ '{print $NF}'
+done > ${workdir}/$file_list
 cd $workdir
 
 file0=`head -1 $file_list`
+bin=`gethead SDTBN $file0`
+[ "$bin" ] || bin=1
 ccd=`gethead CCD_NAME $file0`
 [ "$ccd" ] || ccd=`basename $file0 | cut -c16-17`
 filter=`gethead FILTER $file0`
@@ -65,7 +74,7 @@ wait
 ddoti_unsplit.py bias.fits $nsplit
 fpack bias.fits
 
-tag=${ccd}_$filter
+tag=${ccd}_${filter}_${bin}
 cp bias.fits.fz ${bias_archive_dir}/bias_${dte1}_${tag}.fits.fz
 cp ${me}_${dte}_$$.log ${bias_archive_dir}/bias_${dte1}_${tag}.log
 

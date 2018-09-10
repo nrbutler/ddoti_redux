@@ -1,38 +1,53 @@
 #!/usr/bin/python
 """
- ddoti_unsplit.py file_list [nsplit]
+ ddoti_unsplit.py fits_file [nsplit]
 """
 
-import pyfits
-from numpy import zeros,loadtxt
+from pyfits import getdata,getheader,writeto
+from numpy import zeros
 import sys,os
 
 def usage():
     print __doc__
     sys.exit()
 
-def ddoti_unsplit(file_list,nsplit=4):
+def ddoti_unsplit(fits_file,nsplit=4):
     """
     split the input file into nsplit x nsplit
     """
 
-    filename, file_extension = os.path.splitext(file_list)
-    if (file_extension=='.fits'): files=[file_list]
-    else: files = loadtxt(file_list,dtype='string').tolist()
+    hfile=fits_file.replace('.fits','.head')
+    if (os.path.exists(hfile)):
+        hdr0 = getheader(hfile)
+        a0,b0 = hdr0['NAXIS2'],hdr0['NAXIS1']
+        a,b = a0/nsplit,b0/nsplit
+    else:
+        hdr0 = getheader('f00_'+fits_file)
+        a,b = hdr0['NAXIS2'],hdr0['NAXIS1']
+        a0,b0 = nsplit*a,nsplit*b
 
-    hdr0=pyfits.getheader('f00_'+files[0])
-    a,b = hdr0['NAXIS2'],hdr0['NAXIS1']
-    dat = zeros((a*nsplit,b*nsplit),dtype='float32')
+    dat = zeros((a0,b0),dtype='float32')
 
-    for file in files:
+    do_weight=False
+    wfile0 = 'f00_'+fits_file.replace('.fits','.wt.fits')
+    if (os.path.exists(wfile0)):
+        wdat = zeros((a0,b0),dtype='float32')
+        do_weight=True
 
-        hdr=pyfits.getheader('f00_'+file)
-        for i in xrange(nsplit):
-            for j in xrange(nsplit):
-                file1="""f%d%d_%s""" % (i,j,file)
-                dat[i*a:(i+1)*a,j*b:(j+1)*b] = pyfits.getdata(file1)
+    for i in xrange(nsplit):
+        i1,i2 = i*a,(i+1)*a
+        if (i==nsplit-1): i2=a0
+        for j in xrange(nsplit):
+            j1,j2 = j*b,(j+1)*b
+            if (j==nsplit-1): j2=b0
+            file1="""f%d%d_%s""" % (i,j,fits_file)
+            dat[i1:i2,j1:j2] = getdata(file1)
+            if (do_weight):
+                wfile1=file1.replace('.fits','.wt.fits')
+                wdat[i1:i2,j1:j2] = getdata(wfile1)
 
-        pyfits.writeto(file,dat,hdr,clobber=True)
+    writeto(fits_file,dat,hdr0,clobber=True)
+    if (do_weight): writeto(fits_file.replace('.fits','.wt.fits'),wdat,hdr0,clobber=True)
 
 
 if __name__ == '__main__':
@@ -40,9 +55,9 @@ if __name__ == '__main__':
     """
     if (len(sys.argv)<2): usage()
 
-    file_list = sys.argv[1]
+    fits_file = sys.argv[1]
 
     nsplit=4
     if (len(sys.argv)>2): nsplit=int(sys.argv[2])
 
-    ddoti_unsplit(file_list,nsplit=nsplit)
+    ddoti_unsplit(fits_file,nsplit=nsplit)

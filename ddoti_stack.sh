@@ -6,6 +6,8 @@ shift
 # base reduction
 nsplit=4
 wt_file=
+inst=nircam
+mask_sigma=3.0
 
 while [ $# -gt 0 ] ; do eval $1 ; shift ; done
 
@@ -13,14 +15,15 @@ while [ $# -gt 0 ] ; do eval $1 ; shift ; done
 [ "$wt_file" ] || { echo "Must specify a weight file wt_file" ; exit 2 ; }
 [ -f "$wt_file" ] || { echo "Weight file $wt_file does not exist" ; exit 3 ; }
 
+file0=`head -1 $file_list | sed -e 's/\.bz2/\.txt/g' -e 's/\.fz/\.txt/g'`
+[ -f $file0 ] || { echo "Cannot find first file $file0" ; exit 3 ; }
+
 go_iter=0
 function gonogo() {
     ((go_iter++))
     [ "$((go_iter%NBATCH))" -eq 0 ] && wait
 }
 
-file0=`head -1 $file_list | sed -e 's/\.bz2/\.txt/g'`
-[ -f $file0 ] || { echo "Cannot find first file $file0" ; exit 3 ; }
 cam=`gethead CCD_NAME $file0 | cut -c1-2`
 [ "$cam" ] || cam=`basename $file0 | cut -c16-17`
 
@@ -63,8 +66,16 @@ wait
 
 ddoti_split.py stack_${cam}.head $nsplit 2>/dev/null | sh
 
+# use only the best files
+n0=`cat $file_list | wc -l`
+gethead -a FWHM NSTARS @$file_list | awk '{print $1,$2*(3000./$3)}' | sort -n -k 2 > file_stats$$.txt
+stat0=`head -1 file_stats$$.txt | awk '{print $2}'`
+awk '{if($2<2*'$stat0') print $1}' file_stats$$.txt > good_$file_list
+n1=`cat good_$file_list | wc -l`
+echo "Stacking $n1 of $n0 files with FWHM*(3000/Nstars) < 2*$stat0"
+
 sargs="-c ${SWARP_DIR}/ddoti_redux.swarp -COMBINE_TYPE MEDIAN -WEIGHT_SUFFIX .weight.fits -RESAMPLE N"
-sed -e 's/\.fits/\.resamp\.fits/' $file_list > r$file_list
+ls `sed -e 's/\.fits/\.resamp\.fits/' good_$file_list` 2>/dev/null > r$file_list
 for tag0 in `ls f??_stack_${cam}.head | awk -F_ '{print $1}'`; do
     echo swarp @r$file_list $sargs -IMAGEOUT_NAME ${tag0}_stack_${cam}.fits -WEIGHTOUT_NAME ${tag0}_stack_${cam}.wt.fits
     swarp @r$file_list $sargs -IMAGEOUT_NAME ${tag0}_stack_${cam}.fits -WEIGHTOUT_NAME ${tag0}_stack_${cam}.wt.fits 2>/dev/null &
@@ -72,15 +83,61 @@ for tag0 in `ls f??_stack_${cam}.head | awk -F_ '{print $1}'`; do
 done
 wait
 
-# finally, combine the stacks into a master stack
-ls f??_stack_${cam}.fits > stack_$file_list
-sargs="-c ${SWARP_DIR}/ddoti_redux.swarp -COMBINE_TYPE AVERAGE -WEIGHT_SUFFIX .wt.fits -RESAMPLE N"
-echo swarp @stack_$file_list $sargs -IMAGEOUT_NAME stack_${cam}.fits -WEIGHTOUT_NAME stack_${cam}.wt.fits
-swarp @stack_$file_list $sargs -IMAGEOUT_NAME stack_${cam}.fits -WEIGHTOUT_NAME stack_${cam}.wt.fits 2>/dev/null
+# combine the stacks into a master stack
+ddoti_unsplit.py stack_${cam}.fits
 
 exptime=`gethead -a EXPTIME @$file_list | awk '{s=s+$2}END{printf("%.2f\n",s)}'`
-sat_level=`gethead SATURATE $file0`
-sethead EXPTIME=$exptime SATURATE=$sat_level stack_${cam}.fits stack_${cam}.wt.fits
-sethead EXPTIME=$exptime SATURATE=$sat_level @stack_$file_list
+skylev=`gethead -a SKYLEV @$file_list | awk '{n=n+1;s=s+1/$2}END{printf("%.2f\n",n/s)}'`
+sat_level=`gethead -a SATURATE @$file_list | awk '{n=n+1;s=s+$2}END{printf("%.2f\n",s/n)}'`
+sethead EXPTIME=$exptime SKYLEV=$skylev SATURATE=$sat_level stack_${cam}.fits stack_${cam}.wt.fits
+sethead EXPTIME=$exptime SKYLEV=$skylev SATURATE=$sat_level f??_stack_${cam}.fits f??_stack_${cam}.wt.fits
+
+# make the source mask
+[ -d stack_${cam}_dir ] && rm -r stack_${cam}_dir
+run_sex.sh stack_${cam}.fits $inst -DETECT_THRESH 10.0 -CHECKIMAGE_TYPE OBJECTS -CHECKIMAGE_NAME mask.fits
+sources2mask.py stack_${cam}.wt.fits stack_${cam}_dir/mask.fits maskstack_${cam}.fits $mask_sigma
+
+x0=`gethead CRPIX1 stack_${cam}.fits`; nx0=`gethead NAXIS1 stack_${cam}.fits`
+y0=`gethead CRPIX2 stack_${cam}.fits`; ny0=`gethead NAXIS2 stack_${cam}.fits`
+
+function do_weights() {
+    local file=$1
+    local base=${file%'.fits'}
+    local x=`gethead CRPIX1 $file`
+    local y=`gethead CRPIX2 $file`
+    local dx=`echo $x | awk '{printf("%.0f\n",'$x0'-$1+1)}'`
+    local dy=`echo $y | awk '{printf("%.0f\n",'$y0'-$1+1)}'`
+    local x1=`gethead NAXIS1 $file | awk '{printf("%.0f\n",'$dx'+$1-1)}'`
+    local y1=`gethead NAXIS2 $file | awk '{printf("%.0f\n",'$dy'+$1-1)}'`
+    [ "$x1" -gt "$nx0" ] && {
+        dx=`echo $dx | awk '{printf("%.0f\n",$1-'$x1'+'$nx0')}'`
+        x1=$nx0
+    }
+    [ "$y1" -gt "$ny0" ] && {
+        dy=`echo $dy | awk '{printf("%.0f\n",$1-'$y1'+'$ny0')}'`
+        y1=$ny0
+    }
+    echo weight_clip $file ${base}.weight.fits maskstack_${cam}.fits[$dx:$x1,$dy:$y1] stack_${cam}.fits[$dx:$x1,$dy:$y1] stack_${cam}.wt.fits[$dx:$x1,$dy:$y1]
+    weight_clip $file ${base}.weight.fits maskstack_${cam}.fits[$dx:$x1,$dy:$y1] stack_${cam}.fits[$dx:$x1,$dy:$y1] stack_${cam}.wt.fits[$dx:$x1,$dy:$y1]
+}
+
+for file in `cat r${file_list}`; do
+    do_weights $file &
+    gonogo
+done
+wait
+
+cp stack_${cam}.fits stack1_${cam}.fits
+cp stack_${cam}.wt.fits stack1_${cam}.wt.fits
+
+for tag0 in `ls f??_stack_${cam}.head | awk -F_ '{print $1}'`; do
+    echo swarp @r$file_list $sargs -IMAGEOUT_NAME ${tag0}_stack_${cam}.fits -WEIGHTOUT_NAME ${tag0}_stack_${cam}.wt.fits
+    swarp @r$file_list $sargs -IMAGEOUT_NAME ${tag0}_stack_${cam}.fits -WEIGHTOUT_NAME ${tag0}_stack_${cam}.wt.fits 2>/dev/null &
+    gonogo
+done
+wait
+
+# combine the stacks into a master stack
+ddoti_unsplit.py stack_${cam}.fits
 
 rm f??_stack_${cam}.head rf??_$file_list r$file_list 2>/dev/null

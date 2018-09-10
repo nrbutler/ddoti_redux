@@ -21,17 +21,15 @@
 int main(int argc, char *argv[])
 {
     fitsfile *afptr, *bfptr, *cfptr, *outfptr;  /* FITS file pointers */
-    int inv=0;  /* to invert or not*/
     int status = 0;  /* CFITSIO status value MUST be initialized to zero! */
-    int anaxis, bnaxis, cnaxis, check = 1, ii, op, bitpix=-32;
-    long npixels = 1, firstpix[2] = {1,1}, lastpix[2] = {1,1};
+    int anaxis, bnaxis, check = 1, ii, op, bitpix=-32;
+    long npixels = 1, firstpix[2] = {1,1};
     long anaxes[2] = {1,1}, bnaxes[2]={1,1}, cnaxes[2]={1,1};
-    double *apix, *bpix, *cpix, *opix;
-    double biaslevel=0.;
+    double *apix, *bpix, *cpix;
     float flat_min=0.;
 
-    if (argc < 5) { 
-      printf("Usage: imreduce datafile biasfile flatfile outfile biaslevel\n");
+    if (argc != 5) { 
+      printf("Usage: imreduce datafile biasfile flatfile\n");
       printf("\n");
       printf("Just reduce an image\n");
       printf("\n");
@@ -44,7 +42,6 @@ int main(int argc, char *argv[])
 
     fits_get_img_dim(afptr, &anaxis, &status);  /* read dimensions */
     fits_get_img_dim(bfptr, &bnaxis, &status);
-    fits_get_img_dim(cfptr, &cnaxis, &status);
     fits_get_img_size(afptr, 2, anaxes, &status);
     fits_get_img_size(bfptr, 2, bnaxes, &status);
     fits_get_img_size(cfptr, 2, cnaxes, &status);
@@ -74,9 +71,7 @@ int main(int argc, char *argv[])
       fits_copy_header(afptr, outfptr, &status);
       fits_update_key(outfptr, TINT, "BITPIX", &bitpix, NULL, &status);
       fits_delete_key(outfptr, "BZERO", &status);
-      if (status!=0) status=0;
       fits_delete_key(outfptr, "BSCALE", &status);
-      if (status!=0) status=0;
 
       fits_read_key(cfptr, TFLOAT, "FLATMIN", &flat_min, NULL, &status);
       if (status!=0) {
@@ -89,43 +84,34 @@ int main(int argc, char *argv[])
       apix = (double *) malloc(npixels * sizeof(double)); /* mem for 1 row */
       bpix = (double *) malloc(npixels * sizeof(double));
       cpix = (double *) malloc(npixels * sizeof(double));
-      opix = (double *) malloc(npixels * sizeof(double));
 
-      if (apix == NULL || bpix == NULL || cpix == NULL || opix == NULL) {
+      if (apix == NULL || bpix == NULL || cpix == NULL) {
         printf("Memory allocation error\n");
         return(1);
       }
-      if (argc>5) biaslevel=atof(argv[5]);
-      if (argc>6) inv=atoi(argv[6]);
 
       /* loop over all rows of the plane */
-      for (firstpix[1] = 1; firstpix[1] <= anaxes[1]; firstpix[1]++) {
-        lastpix[1] = anaxes[1] - firstpix[1] + 1;
+      for (firstpix[1] = 1; firstpix[1] <= anaxes[1]; firstpix[1]++)
+      {
         /* Read both images as doubles, regardless of actual datatype.  */
         /* Give starting pixel coordinate and no. of pixels to read.    */
         /* This version does not support undefined pixels in the image. */
 
         if (fits_read_pix(afptr, TDOUBLE, firstpix, npixels, NULL, apix,
-                          NULL, &status)  ||
+                          NULL, &status)  ||         
             fits_read_pix(bfptr, TDOUBLE, firstpix, npixels,  NULL, bpix,
-                          NULL, &status)  ||
+                          NULL, &status)  ||        
             fits_read_pix(cfptr, TDOUBLE, firstpix, npixels,  NULL, cpix,
-                          NULL, &status)  )
+                          NULL, &status)  )        
             break;   /* jump out of loop on error */
 
         for(ii=0; ii< npixels; ii++) {
-          if (cpix[ii]>flat_min) {
-              if (inv==0) opix[ii] = (apix[ii]-bpix[ii]-biaslevel)/cpix[ii];
-              else opix[npixels-ii-1] = (apix[ii]-bpix[ii]-biaslevel)/cpix[ii];
-          }
-          else {
-              if (inv==0) opix[ii]=0;
-              else opix[npixels-ii-1]=0;
-          }
+          if (cpix[ii]>flat_min) cpix[ii] = (apix[ii]-bpix[ii])/cpix[ii];
+          else cpix[ii]=0;
         }
 
-        if (inv==0) fits_write_pix(outfptr, TDOUBLE, firstpix, npixels, opix, &status); /* write new values to output image */
-        else fits_write_pix(outfptr, TDOUBLE, lastpix, npixels, opix, &status); /* write new values to output image */
+        fits_write_pix(outfptr, TDOUBLE, firstpix, npixels,
+                     cpix, &status); /* write new values to output image */
       }
 
       //fits_update_key(outfptr, TINT, "BITPIX", &bitpix, NULL, &status);
@@ -133,7 +119,6 @@ int main(int argc, char *argv[])
       free(apix);
       free(bpix);
       free(cpix);
-      free(opix);
     }
 
     fits_close_file(afptr, &status);
@@ -143,3 +128,4 @@ int main(int argc, char *argv[])
     if (status) fits_report_error(stderr, status); /* print any error message */
     return(status);
 }
+

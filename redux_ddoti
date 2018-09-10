@@ -9,11 +9,8 @@ grb_RA=
 grb_DEC=
 
 #matching
-match_rad=1000 # pixels, default 0 means use image size (slow)
 match_thresh=20.0
-mag_diff_max=3.0
-nmatch_min=10
-image_rad_max=1500
+max_offset=2.0 # degrees , only look at images this close together
 
 # source detection
 do_lightcurves=yes
@@ -30,7 +27,6 @@ do_distort=yes
 # summary
 thumb_size=301
 thumb_scale=2
-do_psf_plot=no
 
 cleanup=no
 
@@ -41,14 +37,24 @@ while [ $# -gt 0 ] ; do eval $1 ; shift ; done
 file0=`head -1 $file_list`
 [ -f $file0 ] || { echo "Cannot find first file $file0" ; exit 2 ; }
 
+cam=`basename $file0 | cut -c16-17`
+bin=`gethead SDTBN $file0`
+[ "$bin" ] || bin=1
+day=`basename $file0 | cut -c1-8`
+filter=`gethead FILTER $file0`
+[ "$filter" ] || filter=W
+tag=${cam}_$filter
+
+sgain=`gethead SOFTGAIN $file0`
+[ "$sgain" ] || sgain=1.0
+sat_level=`echo $sat_level $sgain | awk '{printf("%.2f\n",$1/$2)}'`
+gain=`echo $gain $sgain | awk '{printf("%.2f\n",$1*$2)}'`
+
 go_iter=0
 function gonogo() {
     ((go_iter++))
     [ "$((go_iter%NBATCH))" -eq 0 ] && wait
 }
-
-cam=`basename $file0 | cut -c16-17`
-tag=${cam}_W
 
 dte=`date -u +20%y%m%d_%H%M%S`
 dte1=`basename $file0 | sed -e 's/f//g' -e 's/C/ /g' | awk '{print $1}'`
@@ -63,6 +69,8 @@ workdir=${here}/${me}_${cam}
 [ -d $biasdir ] || mkdir $biasdir
 [ -d $flatdir ] || mkdir $flatdir
 [ -d "$workdir" ] || mkdir $workdir
+biasfile=bias_${cam}.fits
+flatfile=flat_${cam}.fits
 
 nfiles=`cat $file_list | wc -l`
 logfile=${me}_${dte}_${tag}_$$.log
@@ -74,23 +82,74 @@ date -u
 t00=`date +%s`
 echo $cmd
 
-# copy the data into the current directory
+if [ -f "${workdir}/$biasfile" ]; then
+    echo "Using biasfile ${workdir}/$biasfile"
+else
+    if [ -f ${biasdir}/$biasfile ]; then
+        echo "Using biasfile ${biasdir}/$biasfile"
+    else
+        bias=`find_bias.sh $day $cam $bin`
+        cd $biasdir
+        echo funpack -O bias_${cam}.fits $bias
+        funpack -O bias_${cam}.fits $bias
+        cd $here
+    fi
+    ln -s ${biasdir}/$biasfile $workdir
+fi
+
+if [ -f "${workdir}/$flatfile" ]; then
+    echo "Using flatfile ${workdir}/$flatfile"
+else
+    if [ -f ${flatdir}/$flatfile ]; then
+        echo "Using flatfile ${flatdir}/$flatfile"
+    else
+        flat=`find_flat.sh $day $cam $filter $bin`
+        cd $flatdir
+        echo funpack -O flat_${cam}.fits $flat
+        funpack -O flat_${cam}.fits $flat
+        cd $here
+    fi
+    ln -s ${flatdir}/$flatfile $workdir
+fi
+
+bsec=`gethead BIASSEC $file0`
+dsec=`gethead DATASEC $file0`
+nx=`echo $dsec | tr '[:,]' ' ' | awk '{printf("%.0f\n",$2-$1+1)}'`
+ny=`echo $dsec | tr '[:,]' ' ' | awk '{printf("%.0f\n",$4-$3+1)}'`
+cen=`echo $nx $ny | awk '{printf("[%d:%d,%d:%d]\n",$1/2-500,$1/2+500,$2/2-500,$2/2+500)}'`
+function base_redux() {
+    local file=$1
+    local bfile0=$2
+    local med0=`immed "${file}${bsec}"`
+    local med1=`immed "${file}${cen}" | awk '{printf("%.2f\n",$1-('$med0'))}'`
+    local sat=`echo $sat_level $med1 | awk '{printf("%.8f\n",50*($1-$2)/$2)}'`
+    local bs=`echo $med1 | awk '{printf("%.8f\n",50./$1)}'`
+    local smt=`gethead SMTMRO $file | awk '{print int($1)}'`
+    [ "$smt" ] || smt=0
+    if [ "$smt" -eq 0 ]; then
+        imreduce "${file}${dsec}" $workdir/$biasfile $workdir/$flatfile $bfile0 $med0 0
+    else
+        imreduce "${file}${dsec}" $workdir/$biasfile $workdir/$flatfile $bfile0 $med0 1
+    fi
+    sethead SKYLEV=$med1 BSCALE=$bs BZERO=-50 SATURATE=$sat GAIN=$gain $bfile0
+}
+
+# copy/reduce the data into the current directory
 rm ${workdir}/old_$file_list ${workdir}/new_$file_list 2>/dev/null
 for file in `cat $file_list`; do
     bfile=`basename $file`
-    bfile0=${bfile%'.bz2'}
-    if [ "$bfile0" = "$bfile" ]; then
-        [ -f ${workdir}/$bfile ] || cp $file $workdir
-    else
-        [ -f ${workdir}/$bfile0 ] || {
-            cp $file $workdir
-            bunzip2 ${workdir}/$bfile &
-            gonogo
-        }
-    fi
-    echo $bfile0
-done > ${workdir}/$file_list
+    bfile0=${workdir}/${bfile%'.fz'}
+    [ -f $bfile0 ] || {
+        base_redux $file $bfile0 &
+        gonogo
+    }
+done
 wait
+for file in `cat $file_list`; do
+    bfile=`basename $file`
+    bfile0=${bfile%'.fz'}
+    ls ${workdir}/$bfile0 | awk -F/ '{print $NF}'
+done > ${workdir}/$file_list
 cd $workdir
 
 
@@ -98,26 +157,14 @@ cd $workdir
 # align the images, creates new_$file_list of successfully aligned files
 t0=`date +%s`
 #
-aargs="inst=$inst catdir=$catdir grb_RA=$grb_RA grb_DEC=$grb_DEC match_rad=$match_rad"
-aargs="$aargs match_thresh=$match_thresh mag_diff_max=$mag_diff_max nmatch_min=$nmatch_min"
-aargs="$aargs image_rad_max=$image_rad_max do_distort=$do_distort sat_level=$sat_level gain=$gain"
+aargs="inst=$inst catdir=$catdir grb_RA=$grb_RA grb_DEC=$grb_DEC match_thresh=$match_thresh max_offset=$max_offset"
+aargs="$aargs do_distort=$do_distort"
 
 echo ddoti_align.sh $file_list $aargs
 ddoti_align.sh $file_list $aargs
 [ -s "new_$file_list" ] || { echo "No new files aligned, exiting..." ; cp $logfile ${here}/stack_${dte1}_${tag}.log ; exit 3 ; }
 
 date +%s | awk '{printf("Task Alignment: %.2f minutes\n",($1-'$t0')/60.)}'
-####
-
-
-####
-# now reduce each frame
-t0=`date +%s`
-#
-echo ddoti_redux.sh new_$file_list cam=$cam biasdir=$biasdir flatdir=$flatdir
-ddoti_redux.sh new_$file_list cam=$cam biasdir=$biasdir flatdir=$flatdir
-
-date +%s | awk '{printf("Task Reduce Frames: %.2f minutes\n",($1-'$t0')/60.)}'
 ####
 
 
@@ -136,7 +183,7 @@ date +%s | awk '{printf("Task Stack Frames: %.2f minutes\n",($1-'$t0')/60.)}'
 # now find stars not present in USNO, and get lightcurves
 t0=`date +%s`
 #
-pargs="inst=$inst cam=$cam catdir=$catdir do_psf_plot=$do_psf_plot do_lightcurves=$do_lightcurves"
+pargs="inst=$inst cam=$cam catdir=$catdir do_lightcurves=$do_lightcurves"
 pargs="$pargs ndetect_max=$ndetect_max search_snr=$search_snr"
 
 echo ddoti_phot.sh $file_list $pargs

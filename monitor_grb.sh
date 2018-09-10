@@ -49,18 +49,22 @@ if [ "$source_list" ] ; then
        echo "Found >=$nfiles files each of the cameras."
        if [ "$nfiles" -lt "$nfiles_min" ]; then
            echo "Not enough data files yet"
+           cd $REDUX_BASE_DIR
            continue
        fi
        [ -s "nfiles_last.txt" ] || echo 0 > nfiles_last.txt
        nfiles_last=`cat nfiles_last.txt`
        if [ "$nfiles" -le "$nfiles_last" ]; then
            echo "No new data files"
+           cd $REDUX_BASE_DIR
            continue
        fi
        [ "$test" = "echo" ] || echo $nfiles > nfiles_last.txt
        ready_source_list="$ready_source_list $dir"
        cd $REDUX_BASE_DIR
    done
+
+   touch /home/ddoti/monitoring.txt
 
    # now process the ready directories
    source_list=$ready_source_list

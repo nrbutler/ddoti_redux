@@ -13,7 +13,7 @@ def robust_mean(x,dx):
         return x0,0.
     else:
 
-        for i in range(20):
+        for i in xrange(20):
             resid = x - x0
             weight = 1./dx**2
             resid_err = abs(resid)/dx

@@ -3,9 +3,6 @@
 file_list=$1
 shift
 
-cam=C0
-filter=W
-tag=
 biasdir=
 flatdir=
 
@@ -21,15 +18,17 @@ function gonogo() {
     [ "$((go_iter%NBATCH))" -eq 0 ] && wait
 }
 
-[ -d tmp ] || mkdir tmp
-
-[ "$tag" ] && tag="${tag}_"
-biasfile=${tag}bias_${cam}.fits
-flatfile=${tag}flat_${cam}.fits
-
 file0=`head -1 $file_list`
+cam=`basename $file0 | cut -c16-17`
+bin=`gethead SDTBN $file0`
+[ "$bin" ] || bin=1
 day=`basename $file0 | cut -c1-8`
+filter=`gethead FILTER $file0`
+[ "$filter" ] || filter=W
 here=`pwd`
+
+biasfile=bias_${cam}.fits
+flatfile=flat_${cam}.fits
 
 if [ -f "$biasfile" ]; then
     echo "Using biasfile $biasfile"
@@ -37,7 +36,7 @@ else
     if [ -f ${biasdir}/$biasfile ]; then
         echo "Using biasfile ${biasdir}/$biasfile"
     else
-        bias=`find_bias.sh $day $cam`
+        bias=`find_bias.sh $day $cam $bin`
         cd $biasdir
         echo funpack -O bias_${cam}.fits $bias
         funpack -O bias_${cam}.fits $bias
@@ -52,7 +51,7 @@ else
     if [ -f ${flatdir}/$flatfile ]; then
         echo "Using flatfile ${flatdir}/$flatfile"
     else
-        flat=`find_flat.sh $day $cam $filter`
+        flat=`find_flat.sh $day $cam $filter $bin`
         cd $flatdir
         echo funpack -O flat_${cam}.fits $flat
         funpack -O flat_${cam}.fits $flat
@@ -61,19 +60,13 @@ else
     ln -s ${flatdir}/$flatfile .
 fi
 
-function doit() {
-    local file=$1
-    imreduce $file $biasfile $flatfile tmp/$file
-    mv tmp/$file $file
-}
-
+# first pull out data_sec, and estimate bias from bias_sec (creates f00_file for each file)
 ddoti_split.sh $file_list 1
-for file in `cat $file_list`; do
-    [ -f f00_$file ] && mv f00_$file $file
-done
 
 for file in `cat $file_list`; do
-    doit $file &
+    imreduce f00_$file $biasfile $flatfile \!$file &
     gonogo
 done
 wait
+
+rm f00_*.fits 2>/dev/null

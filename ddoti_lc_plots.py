@@ -22,9 +22,18 @@ def lc_plots_ddoti(datafile,radecfile,timefile,t0,nmin=2,nmax=100):
        allow a maximum of nmax sources through
        if present not just in the stack, must be present at least nmin times
     """
-    id,mag,dmag,fwhm,expos,epoch,part = loadtxt(datafile,unpack=True)
-    id = id.astype('int16')
-    epoch = epoch.astype('int16')
+    ofile=datafile+'.summary.txt'
+    of = open(ofile,'w')
+    of.write("#   id    RA           DEC          mag      dmag     fwhm     slope    dslope       chi2   n_detect\n")
+
+    data = loadtxt(datafile,ndmin=2).T
+    if (len(data[0])==0):
+        of.close()
+        sys.exit()
+
+    id,mag,dmag,fwhm,expos,epoch,part = data
+    id = id.astype('int32')
+    epoch = epoch.astype('int32')
 
     gps0 = ut2gps(t0)
     times = loadtxt(timefile,dtype='string',usecols=(0,),ndmin=1)
@@ -43,10 +52,6 @@ def lc_plots_ddoti(datafile,radecfile,timefile,t0,nmin=2,nmax=100):
 
     nepoch = len(unique(epoch))-1
 
-    ofile=datafile+'.summary.txt'
-    of = open(ofile,'w')
-    of.write("#   id    RA           DEC          mag      dmag     fwhm     slope    dslope       chi2   n_detect\n")
-
     cat_dat = loadtxt(radecfile,ndmin=2).T
     if (len(cat_dat[0])==0):
         of.close()
@@ -61,6 +66,7 @@ def lc_plots_ddoti(datafile,radecfile,timefile,t0,nmin=2,nmax=100):
         h = id==id0
         n,p,m,dm,f=epoch[h],part[h],mag[h],dmag[h],fwhm[h]
 
+        # get rid of multiple detections in an epoch
         good = ones(len(n),dtype='bool')
         n1 = unique(n[n>0])
         for nn in n1:

@@ -3,12 +3,11 @@
 file_list=$1
 shift
 
-nstars_min=1
+nstars_min=10
 thresh=1.5
+cal_mag_max=16.0
 inst=nircam
-psf_only=no
-plot=no
-dao=
+sex_args=
 srcfile=
 
 while [ $# -gt 0 ] ; do eval $1 ; shift ; done
@@ -22,38 +21,30 @@ function gonogo() {
 [ "$thresh" ] || thresh=1.5
 
 if [ "$srcfile" ]; then
-    srcfile0=$srcfile
-    srcfile="srcfile=$srcfile"
+    for file in `cat $file_list`; do
+        x=`gethead CRPIX1 $file`; y=`gethead CRPIX2 $file`
+        base=${file%'.fits'}
+        if [ -d ${base}_dir ]; then rm ${base}_dir/sky*
+        else mkdir ${base}_dir ; fi
+        awk '{print $1+'$x',$2+'$y',$3,$4,$5}' $srcfile > ${base}_dir/sky.list &
+        gonogo
+    done
+    wait
 fi
-
-if [ "$plot" = "yes" ]; then
-    plot="_plot"
-else
-    plot=
-fi
-
-psfonly=
-if [ "$psf_only" = "yes" ]; then
-    psfonly=psfonly
-fi
-
-n0=`cat $file_list | wc -l`
-
-function dophot() {
-    local file=$1
-    local base=${file%'.fits'}
-    [ -d ${base}_dir ] && rm -r ${base}_dir
-    run_sex.sh $file $inst $dao $psfonly $srcfile -DETECT_THRESH $thresh > /dev/null 2>&1
-    [ "$srcfile" ] && calibrate.py ${base}_dir/${base}_radec.txt $srcfile0 > ${base}_dir/${base}.report
-}
 
 for file in `cat $file_list`; do
-    dophot $file &
+    run_sex.sh $file $inst -DETECT_THRESH $thresh $sex_args > /dev/null 2>&1 &
     gonogo
 done
 wait
 
 if [ "$srcfile" ]; then
+
+    for base in `sed -e 's/\.fits//g' $file_list`; do
+        calibrate.py ${base}_dir/${base}_radec.txt $srcfile ${base}_dir/${base}_radec.txt.photometry.txt ${base}_dir/${base}_radec.txt.match.txt $cal_mag_max > ${base}_dir/${base}.report &
+        gonogo
+    done
+    wait
 
     for file in `cat $file_list`; do
         base=${file%'.fits'}
@@ -66,23 +57,23 @@ else
 
     for file in `cat $file_list`; do
         base=${file%'.fits'}
-        grep -v '#' ${base}_dir/${base}_radec.txt | awk '{print $7}'
+        fwhm=`quick_mode ${base}_dir/${base}_radec.txt n=7`
+        if [ "$fwhm" ]; then
+            head -1 ${base}_dir/${base}_radec.txt > ${base}_dir/${base}_radec.tmp
+            grep -v '#' ${base}_dir/${base}_radec.txt | awk '{if($7>'$fwhm'/2. && $7<'$fwhm'*4) print}' >> ${base}_dir/${base}_radec.tmp
+            mv ${base}_dir/${base}_radec.tmp ${base}_dir/${base}_radec.txt
+            nstars=`grep -v '#' ${base}_dir/${base}_radec.txt | wc -l`
+            sethead NSTARS=$nstars FWHM=$fwhm $file
+            echo $fwhm
+        fi
     done > fwhm$$.txt
     fwhm0=`quick_mode fwhm$$.txt`
     [ "$fwhm0" ] && echo "Median FWHM of stars in images is $fwhm0 pixels"
     rm fwhm$$.txt
 
-    for file in `cat $file_list`; do
-        base=${file%'.fits'}
-        head -1 ${base}_dir/${base}_radec.txt > ${base}_dir/${base}_radec.tmp
-        grep -v '#' ${base}_dir/${base}_radec.txt | awk '{if($7>'$fwhm0'/2. && $7<'$fwhm0'*4) print}' >> ${base}_dir/${base}_radec.tmp
-        mv ${base}_dir/${base}_radec.tmp ${base}_dir/${base}_radec.txt
-        ns=`grep -v '#' ${base}_dir/${base}_radec.txt | wc -l`
-        [ "$ns" ] || ns=0
-        [ "$ns" -ge "$nstars_min" ] && echo $file
-    done > stars_$file_list
-
+    gethead -a NSTARS @$file_list | awk '{if($2>'$nstars_min') print $1}' > stars_$file_list
 fi
 
+n0=`cat $file_list | wc -l`
 n1=`cat stars_$file_list | wc -l`
 echo "Keeping $n1 of $n0 images with $nstars_min or more stars."

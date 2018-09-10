@@ -41,7 +41,7 @@ def ddoti_getradecrange(file_list,wt_min=0.):
         if (r2<r1): r1,r2=r2,r1
         if (d2<d1): d1,d2=d2,d1
 
-        print """sethead I1=%d I2=%d J1=%d J2=%d RA0=%.8f RA1=%.8f DEC0=%.8f DEC1=%.8f %s""" % (x1,x2,y1,y2,r1,r2,d1,d2,file)
+        print """sethead RA0=%.8f RA1=%.8f DEC0=%.8f DEC1=%.8f %s""" % (r1,r2,d1,d2,file)
 
 
 if __name__ == '__main__':

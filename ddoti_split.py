@@ -58,10 +58,14 @@ def ddoti_split(file_list,nsplit=4,skip=10):
             hdu.close()
 
         for i in xrange(nsplit):
+            j0,j1 = i*sx+c,(i+1)*sx+c-1
+            if (i==nsplit-1): j1 = sx0+c-1
             for j in xrange(nsplit):
+                i0,i1 = j*sy+a,(j+1)*sy+a-1
+                if (j==nsplit-1): i1 = sy0+a-1
                 file1="""f%d%d_%s""" % (i,j,file)
-                if (headfile): str1="""cp %s %s ; sethead NAXIS1=%d NAXIS2=%d CRPIX1=%s CRPIX2=%s %s\n""" % (file,file1,sy,sx,str(x0-j*sy-a+1),str(y0-i*sx-c+1),file1)
-                else: str1="""getfits %s %d-%d %d-%d -o %s""" % (file,j*sy+a,(j+1)*sy+a-1,i*sx+c,(i+1)*sx+c-1,file1)
+                if (headfile): str1="""cp %s %s ; sethead I0=%d I1=%d J0=%d J1=%d NAXIS1=%d NAXIS2=%d CRPIX1=%s CRPIX2=%s %s\n""" % (file,file1,i0,i1,j0,j1,i1-i0+1,j1-j0+1,str(x0-j*sy-a+1),str(y0-i*sx-c+1),file1)
+                else: str1="""getfits %s %d-%d %d-%d -o %s""" % (file,i0,i1,j0,j1,file1)
                 print str1
 
 
